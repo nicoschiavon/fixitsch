@@ -1,0 +1,6 @@
+{
+  "name": "FixiTsch - Gestión de Servicio Técnico",
+  "description": "Sistema integral de gestión para talleres de reparación de celulares, tablets y notebooks: órdenes, inventario, despiece para repuestos y portal de clientes.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
