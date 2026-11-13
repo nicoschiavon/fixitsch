@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   RepairOrder,
   InventoryPart,
@@ -9,21 +9,20 @@ import {
   TrialAccount,
   UserAccount
 } from './types';
+import { loadStoredTrial, saveStoredTrial } from './utils/storage';
 import {
-  loadStoredOrders,
-  saveStoredOrders,
-  loadStoredParts,
-  saveStoredParts,
-  loadStoredDonors,
-  saveStoredDonors,
-  loadStoredSettings,
-  saveStoredSettings,
-  loadStoredTrial,
-  saveStoredTrial,
-  loadStoredCurrentUser,
-  saveStoredCurrentUser
-} from './utils/storage';
+  clearWorkshop,
+  currentAccount,
+  loadWorkshop,
+  logout as logoutAccount,
+  saveDonors,
+  saveOrders,
+  saveParts,
+  saveSettings,
+  toUserAccount
+} from './api/client';
 import { INITIAL_ORDERS, INITIAL_PARTS, INITIAL_DONOR_DEVICES, INITIAL_SETTINGS } from './data/initialData';
+import { resolveShellMode, visibleSection, type AppTab } from './utils/appShell';
 import { Navbar } from './components/Navbar';
 import { LandingPage } from './components/Landing/LandingPage';
 import { OrdersList } from './components/Orders/OrdersList';
@@ -50,18 +49,47 @@ import {
 } from 'lucide-react';
 
 export default function App() {
-  // Current authenticated user (null = Guest / Demo without persistence)
-  const [currentUser, setCurrentUser] = useState<UserAccount | null>(loadStoredCurrentUser);
+  const [currentUser, setCurrentUser] = useState<UserAccount | null>(null);
+  const [authReady, setAuthReady] = useState(false);
+  const accountRef = useRef<UserAccount | null>(null);
+  const saveChain = useRef<Promise<unknown>>(Promise.resolve());
 
-  const [orders, setOrders] = useState<RepairOrder[]>(() => loadStoredOrders(currentUser));
-  const [parts, setParts] = useState<InventoryPart[]>(() => loadStoredParts(currentUser));
-  const [donors, setDonors] = useState<DonorDevice[]>(() => loadStoredDonors(currentUser));
-  const [settings, setSettings] = useState<WorkshopSettings>(() => loadStoredSettings(currentUser));
+  const [orders, setOrders] = useState<RepairOrder[]>(INITIAL_ORDERS);
+  const [parts, setParts] = useState<InventoryPart[]>(INITIAL_PARTS);
+  const [donors, setDonors] = useState<DonorDevice[]>(INITIAL_DONOR_DEVICES);
+  const [settings, setSettings] = useState<WorkshopSettings>(INITIAL_SETTINGS);
   const [trial, setTrial] = useState<TrialAccount>(loadStoredTrial);
 
-  const [currentTab, setCurrentTab] = useState<
-    'landing' | 'orders' | 'inventory' | 'teardown' | 'history' | 'client_portal'
-  >('landing');
+  useEffect(() => {
+    let cancelled = false;
+    currentAccount()
+      .then(async (account) => {
+        if (cancelled || !account) return;
+        const user = toUserAccount(account);
+        const data = await loadWorkshop();
+        if (cancelled) return;
+        accountRef.current = user;
+        setCurrentUser(user);
+        setDemoActive(false);
+        setOrders(data.orders);
+        setParts(data.parts);
+        setDonors(data.donors);
+        setSettings(data.settings);
+        setCurrentTab((tab) => (tab === 'landing' ? 'orders' : tab));
+      })
+      .catch(() => {
+        accountRef.current = null;
+      })
+      .finally(() => {
+        if (!cancelled) setAuthReady(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const [currentTab, setCurrentTab] = useState<AppTab>('landing');
+  const [demoActive, setDemoActive] = useState(false);
 
   // Dark mode
   const [isDark, setIsDark] = useState<boolean>(() => {
@@ -113,36 +141,97 @@ export default function App() {
     setIsAuthModalOpen(true);
   };
 
-  const handleLoginSuccess = (user: UserAccount) => {
-    saveStoredCurrentUser(user);
-    setCurrentUser(user);
-
-    // Load or initialize user-scoped data
-    const userOrders = loadStoredOrders(user);
-    const userParts = loadStoredParts(user);
-    const userDonors = loadStoredDonors(user);
-    const userSettings = loadStoredSettings(user);
-
-    setOrders(userOrders);
-    setParts(userParts);
-    setDonors(userDonors);
-    setSettings(userSettings);
-
-    setCurrentTab('orders');
-    alert(`¡Bienvenido, ${user.name}! Tu cuenta FixiTsch tiene Acceso Completo Bonificado con persistencia de datos activa.`);
+  const applyWorkshop = (data: {
+    orders: RepairOrder[];
+    parts: InventoryPart[];
+    donors: DonorDevice[];
+    settings: WorkshopSettings;
+  }) => {
+    setOrders(data.orders);
+    setParts(data.parts);
+    setDonors(data.donors);
+    setSettings(data.settings);
   };
 
-  const handleLogout = () => {
-    saveStoredCurrentUser(null);
-    setCurrentUser(null);
+  const clearOrderQuery = () => {
+    const url = new URL(window.location.href);
+    if (url.searchParams.has('order')) {
+      url.searchParams.delete('order');
+      window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
+    }
+    setPortalOrderQuery(undefined);
+  };
 
-    // Revert to non-persistent demo seed data
+  const resetDemoMemory = () => {
     setOrders(INITIAL_ORDERS);
     setParts(INITIAL_PARTS);
     setDonors(INITIAL_DONOR_DEVICES);
     setSettings(INITIAL_SETTINGS);
+  };
 
-    alert('Has cerrado sesión. Ahora estás en Modo Prueba Demo (sin persistencia de datos).');
+  const enterDemo = (tab: AppTab = 'orders') => {
+    if (accountRef.current) {
+      setCurrentTab(tab === 'landing' ? 'orders' : tab);
+      return;
+    }
+    if (!demoActive) {
+      resetDemoMemory();
+      clearOrderQuery();
+    }
+    setDemoActive(true);
+    setCurrentTab(tab === 'landing' ? 'orders' : tab);
+  };
+
+  const closeWorkshopChrome = () => {
+    setIsNewOrderOpen(false);
+    setIsSettingsOpen(false);
+    setSelectedOrderForDetail(null);
+    setNotificationTarget(null);
+    setPrintTicketOrder(null);
+  };
+
+  const exitDemo = () => {
+    closeWorkshopChrome();
+    setDemoActive(false);
+    resetDemoMemory();
+    clearOrderQuery();
+    setCurrentTab('landing');
+  };
+
+  const goHome = () => {
+    if (accountRef.current) {
+      setCurrentTab('orders');
+      return;
+    }
+    closeWorkshopChrome();
+    setDemoActive(false);
+    clearOrderQuery();
+    setCurrentTab('landing');
+  };
+
+  const handleLoginSuccess = async (user: UserAccount) => {
+    localStorage.removeItem('fixitsch_current_user_v2');
+    accountRef.current = user;
+    setCurrentUser(user);
+    setDemoActive(false);
+    clearOrderQuery();
+    applyWorkshop(await loadWorkshop());
+    setCurrentTab('orders');
+  };
+
+  const handleLogout = async () => {
+    accountRef.current = null;
+    try {
+      await logoutAccount();
+    } catch {
+      // La sesión local se cierra igual si el servidor no responde.
+    }
+    setCurrentUser(null);
+    setDemoActive(false);
+    closeWorkshopChrome();
+    resetDemoMemory();
+    clearOrderQuery();
+    setCurrentTab('landing');
   };
 
   const handleResetDemoData = () => {
@@ -155,33 +244,50 @@ export default function App() {
     }
   };
 
-  // Sync state (writes to persistent storage ONLY IF user hasPersistence === true)
+  const persist = (task: () => Promise<unknown>) => {
+    if (!accountRef.current) return;
+    saveChain.current = saveChain.current
+      .then(task)
+      .catch(() => {
+        alert('No se pudieron guardar los datos de esta cuenta.');
+      });
+  };
+
   const handleUpdateOrders = (newOrders: RepairOrder[]) => {
     setOrders(newOrders);
-    saveStoredOrders(newOrders, currentUser);
+    persist(() => saveOrders(newOrders));
   };
 
   const handleUpdateParts = (newParts: InventoryPart[]) => {
     setParts(newParts);
-    saveStoredParts(newParts, currentUser);
+    persist(() => saveParts(newParts));
   };
 
   const handleUpdateDonors = (newDonors: DonorDevice[]) => {
     setDonors(newDonors);
-    saveStoredDonors(newDonors, currentUser);
+    persist(() => saveDonors(newDonors));
   };
 
   const handleSaveSettings = (newSettings: WorkshopSettings) => {
     setSettings(newSettings);
-    saveStoredSettings(newSettings, currentUser);
+    persist(() => saveSettings(newSettings));
   };
 
-  const handleReloadAll = () => {
-    setOrders(loadStoredOrders(currentUser));
-    setParts(loadStoredParts(currentUser));
-    setDonors(loadStoredDonors(currentUser));
-    setSettings(loadStoredSettings(currentUser));
+  const handleReloadAll = async () => {
+    if (!accountRef.current) return;
+    applyWorkshop(await loadWorkshop());
     setTrial(loadStoredTrial());
+  };
+
+  const handleClearAccount = async () => {
+    if (!accountRef.current) {
+      setOrders(INITIAL_ORDERS);
+      setParts(INITIAL_PARTS);
+      setDonors(INITIAL_DONOR_DEVICES);
+      setSettings(INITIAL_SETTINGS);
+      return;
+    }
+    applyWorkshop(await clearWorkshop());
   };
 
   // Trial & Subscription Handlers
@@ -199,6 +305,7 @@ export default function App() {
       handleSaveSettings(updatedSettings);
     }
 
+    if (!accountRef.current) setDemoActive(true);
     setCurrentTab('orders');
   };
 
@@ -369,29 +476,46 @@ export default function App() {
   ).length;
   const lowStockCount = parts.filter((p) => p.stock <= p.minStock).length;
   const lastOrderNumber = orders[0]?.orderNumber || 'ORD-1045';
+  const shellMode = resolveShellMode({
+    hasAccount: Boolean(currentUser),
+    demoActive,
+    hasPortalQuery: Boolean(portalOrderQuery),
+  });
+  const section = visibleSection(shellMode, currentTab);
+
+  if (!authReady) {
+    return (
+      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-500 flex items-center justify-center text-sm">
+        Cargando sesión...
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 transition-colors flex flex-col font-sans">
       {/* Top Navbar */}
       <Navbar
-        currentTab={currentTab}
+        mode={shellMode}
+        currentTab={section === 'portal' ? 'client_portal' : section === 'landing' ? 'landing' : section}
         onSelectTab={setCurrentTab}
         onOpenNewOrder={() => setIsNewOrderOpen(true)}
         onOpenSettings={() => setIsSettingsOpen(true)}
-        onOpenTrialModal={() => setIsTrialModalOpen(true)}
-        onOpenCheckoutModal={() => setIsCheckoutModalOpen(true)}
         onOpenAuthModal={handleOpenAuth}
+        onEnterDemo={() => enterDemo('orders')}
+        onExitDemo={exitDemo}
+        onGoHome={goHome}
         onLogout={handleLogout}
         isDark={isDark}
         onToggleTheme={() => setIsDark(!isDark)}
         activeOrdersCount={activeOrdersCount}
         lowStockCount={lowStockCount}
-        trial={trial}
-        currentUser={currentUser}
+        workshopName={settings.workshopName}
+        logoDataUrl={settings.logoDataUrl}
+        isPlatformOwner={currentUser?.role === 'admin'}
       />
 
       {/* PERMISSIONS & DATA PERSISTENCE STATUS STRIP */}
-      {currentTab !== 'landing' && (
+      {(shellMode === 'demo' || shellMode === 'account') && (
         <div
           className={`text-xs px-4 py-2 flex flex-wrap items-center justify-between gap-2 border-b transition-colors ${
             currentUser && currentUser.hasPersistence
@@ -405,7 +529,8 @@ export default function App() {
                 <>
                   <ShieldCheck className="w-4 h-4 text-emerald-200 shrink-0" />
                   <span>
-                    <strong>Acceso Completo Bonificado:</strong> Conectado como <strong>{currentUser.name}</strong> ({currentUser.email}). Persistencia de datos activada.
+                    <strong>{currentUser.role === 'admin' ? 'Cuenta principal' : 'Taller'}:</strong>{' '}
+                    <strong>{currentUser.name}</strong> ({currentUser.username}). Solo ves los datos de esta cuenta.
                   </span>
                 </>
               ) : (
@@ -430,16 +555,23 @@ export default function App() {
                   </button>
 
                   <button
+                    onClick={() => handleOpenAuth('login')}
+                    className="px-2.5 py-1 bg-white text-slate-950 font-bold rounded text-[11px] hover:bg-amber-50 transition-colors shadow-xs"
+                  >
+                    Ingresar
+                  </button>
+
+                  <button
                     onClick={() => handleOpenAuth('signup')}
                     className="px-2.5 py-1 bg-slate-950 text-white font-bold rounded text-[11px] hover:bg-slate-900 transition-colors shadow-xs"
                   >
-                    Crear Cuenta con Google (Guardar mis datos)
+                    Crear cuenta
                   </button>
                 </>
               ) : (
                 <div className="flex items-center gap-2">
                   <span className="text-[11px] text-emerald-100">
-                    Taller: <strong>{currentUser.workshopName}</strong>
+                    Taller: <strong>{settings.workshopName || currentUser.workshopName}</strong>
                   </span>
                 </div>
               )}
@@ -450,11 +582,11 @@ export default function App() {
 
       {/* Main Viewport Container */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
-        {currentTab === 'landing' && (
+        {section === 'landing' && (
           <LandingPage
             onStartTrial={() => setIsTrialModalOpen(true)}
             onOpenCheckout={() => setIsCheckoutModalOpen(true)}
-            onEnterApp={(tab) => setCurrentTab(tab || 'orders')}
+            onEnterApp={(tab) => enterDemo(tab || 'orders')}
             onOpenAuthModal={handleOpenAuth}
             trial={trial}
             settings={settings}
@@ -462,7 +594,18 @@ export default function App() {
           />
         )}
 
-        {currentTab === 'orders' && (
+        {section === 'portal' && shellMode === 'portal' && (
+          <CustomerPortalView
+            orders={orders}
+            settings={settings}
+            initialOrderNumber={portalOrderQuery}
+            onUpdateOrder={handleSaveOrderChanges}
+            onBackToAdmin={goHome}
+            backLabel="Volver al inicio"
+          />
+        )}
+
+        {section === 'orders' && (
           <OrdersList
             orders={orders}
             settings={settings}
@@ -477,7 +620,7 @@ export default function App() {
           />
         )}
 
-        {currentTab === 'inventory' && (
+        {section === 'inventory' && (
           <InventoryManager
             parts={parts}
             settings={settings}
@@ -487,7 +630,7 @@ export default function App() {
           />
         )}
 
-        {currentTab === 'teardown' && (
+        {section === 'teardown' && (
           <TeardownManager
             donors={donors}
             settings={settings}
@@ -497,7 +640,7 @@ export default function App() {
           />
         )}
 
-        {currentTab === 'history' && (
+        {section === 'history' && (
           <RepairHistory
             orders={orders}
             settings={settings}
@@ -505,7 +648,7 @@ export default function App() {
           />
         )}
 
-        {currentTab === 'client_portal' && (
+        {section === 'client_portal' && (
           <CustomerPortalView
             orders={orders}
             settings={settings}
@@ -528,43 +671,56 @@ export default function App() {
               <span>Software para Servicios Técnicos de Tecnología</span>
               <span>·</span>
               <span className="text-emerald-600 dark:text-emerald-400 font-semibold">
-                Acceso Completo Bonificado
+                Datos aislados por cuenta
               </span>
             </div>
 
             <div className="flex items-center gap-4 text-xs">
-              <button
-                onClick={() => setCurrentTab('landing')}
-                className="text-slate-600 dark:text-slate-300 hover:text-indigo-600"
-              >
-                Inicio
-              </button>
-              <button
-                onClick={() => setCurrentTab('orders')}
-                className="text-slate-600 dark:text-slate-300 hover:text-indigo-600"
-              >
-                Panel Taller
-              </button>
-              <button
-                onClick={() => setCurrentTab('client_portal')}
-                className="text-indigo-600 dark:text-indigo-400 hover:underline"
-              >
-                Portal Clientes
-              </button>
-              {!currentUser ? (
-                <button
-                  onClick={() => handleOpenAuth('signup')}
-                  className="text-indigo-600 dark:text-indigo-400 font-bold hover:underline"
-                >
-                  Crear Cuenta (Google)
-                </button>
+              {shellMode === 'public' || shellMode === 'portal' ? (
+                <>
+                  <button
+                    onClick={goHome}
+                    className="text-slate-600 dark:text-slate-300 hover:text-indigo-600"
+                  >
+                    Inicio
+                  </button>
+                  <button
+                    onClick={() => handleOpenAuth('login')}
+                    className="text-slate-600 dark:text-slate-300 hover:text-indigo-600"
+                  >
+                    Ingresar
+                  </button>
+                  <button
+                    onClick={() => handleOpenAuth('signup')}
+                    className="text-indigo-600 dark:text-indigo-400 font-bold hover:underline"
+                  >
+                    Crear cuenta
+                  </button>
+                </>
               ) : (
-                <button
-                  onClick={handleLogout}
-                  className="text-rose-600 hover:underline"
-                >
-                  Cerrar Sesión
-                </button>
+                <>
+                  <button
+                    onClick={() => setCurrentTab('orders')}
+                    className="text-slate-600 dark:text-slate-300 hover:text-indigo-600"
+                  >
+                    Órdenes
+                  </button>
+                  <button
+                    onClick={() => setCurrentTab('client_portal')}
+                    className="text-indigo-600 dark:text-indigo-400 hover:underline"
+                  >
+                    Portal Clientes
+                  </button>
+                  {shellMode === 'account' ? (
+                    <button onClick={handleLogout} className="text-rose-600 hover:underline">
+                      Cerrar sesión
+                    </button>
+                  ) : (
+                    <button onClick={exitDemo} className="text-rose-600 hover:underline">
+                      Salir de la demo
+                    </button>
+                  )}
+                </>
               )}
             </div>
           </div>
@@ -638,6 +794,9 @@ export default function App() {
         onClose={() => setIsSettingsOpen(false)}
         onSaveSettings={handleSaveSettings}
         onReloadAllData={handleReloadAll}
+        persisted={Boolean(currentUser)}
+        onClearData={handleClearAccount}
+        onExportData={() => exportCurrentData(currentUser, orders, parts, donors, settings)}
       />
 
       {/* 6. Trial Account Modal */}
@@ -657,7 +816,7 @@ export default function App() {
         settings={settings}
       />
 
-      {/* 8. Authentication & Google Login Modal */}
+      {/* 8. Authentication */}
       <AuthModal
         isOpen={isAuthModalOpen}
         onClose={() => setIsAuthModalOpen(false)}
@@ -666,4 +825,29 @@ export default function App() {
       />
     </div>
   );
+}
+
+function exportCurrentData(
+  user: UserAccount | null,
+  orders: RepairOrder[],
+  parts: InventoryPart[],
+  donors: DonorDevice[],
+  settings: WorkshopSettings
+) {
+  const data = {
+    user: user ? { username: user.username, workshopName: user.workshopName } : { role: 'guest_demo' },
+    orders,
+    parts,
+    donors,
+    settings,
+    exportedAt: new Date().toISOString(),
+    version: '2.1-FixiTsch'
+  };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `backup_fixitsch_${user?.username || 'demo'}_${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
 }

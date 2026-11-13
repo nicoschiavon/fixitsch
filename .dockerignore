@@ -1,0 +1,10 @@
+node_modules
+dist
+build
+.git
+.opencode
+coverage
+*.log
+.env
+.env.*
+!.env.example

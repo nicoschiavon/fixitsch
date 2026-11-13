@@ -161,6 +161,7 @@ export interface WorkshopSettings {
   termsConditions: string;
   whatsappReadyTemplate: string;
   whatsappBudgetTemplate: string;
+  logoDataUrl?: string;
 }
 
 export interface TrialAccount {
@@ -195,13 +196,14 @@ export type UserRole = 'guest_demo' | 'registered_full_access' | 'admin';
 
 export interface UserAccount {
   id: string;
+  username: string;
   name: string;
   email: string;
   avatarUrl?: string;
-  provider: 'google' | 'email';
+  provider: 'password' | 'google' | 'email';
   role: UserRole;
   workshopName: string;
   createdAt: string;
   hasPersistence: boolean;
-  planStatus: 'demo_trial' | 'full_access_free_promo';
+  planStatus: 'demo_trial' | 'full_access_free_promo' | 'account';
 }

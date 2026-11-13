@@ -34,6 +34,7 @@ interface CustomerPortalViewProps {
   initialOrderNumber?: string;
   onUpdateOrder: (order: RepairOrder) => void;
   onBackToAdmin?: () => void;
+  backLabel?: string;
 }
 
 export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({
@@ -41,7 +42,8 @@ export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({
   settings,
   initialOrderNumber,
   onUpdateOrder,
-  onBackToAdmin
+  onBackToAdmin,
+  backLabel = 'Volver al Panel de Taller'
 }) => {
   const [searchInput, setSearchInput] = useState(initialOrderNumber || 'ORD-1042');
   const [selectedOrder, setSelectedOrder] = useState<RepairOrder | null>(null);
@@ -181,7 +183,7 @@ export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({
               onClick={onBackToAdmin}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white text-xs font-medium rounded-lg backdrop-blur-xs whitespace-nowrap self-start sm:self-center"
             >
-              <span>Volver al Panel de Taller</span>
+              <span>{backLabel}</span>
             </button>
           )}
         </div>

@@ -1,0 +1,76 @@
+name: fixitsch
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: fixitsch
+      POSTGRES_PASSWORD: tu_password_db_aqui
+      POSTGRES_DB: fixitsch
+    volumes:
+      - fixitsch_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fixitsch -d fixitsch"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  migrate:
+    image: postgres:16-alpine
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: fixitsch_local
+    volumes:
+      - ./server/schema.sql:/schema.sql:ro
+      - ./server/migrate.sh:/migrate.sh:ro
+    entrypoint: ["sh", "/migrate.sh"]
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    image: fixitsch-api:local
+    environment:
+      DATABASE_URL: postgres://fixitsch_app:fixitsch_app_local@db:5432/fixitsch
+      ADMIN_USERNAME: 
+      ADMIN_PASSWORD: 
+      PORT: 4000
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: fixitsch:local
+    ports:
+      - "3001:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # --- Nuevo servicio de pgAdmin ---
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: fixitsch_pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: nico.schiavon@gmail.com
+      PGADMIN_DEFAULT_PASSWORD: 35138555!ElGarfi
+    ports:
+      - "5050:80"
+    restart: unless-stopped
+
+volumes:
+  fixitsch_pg:
