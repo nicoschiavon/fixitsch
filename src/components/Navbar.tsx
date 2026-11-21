@@ -8,6 +8,8 @@ import {
   ExternalLink,
   LogOut,
   LogIn,
+  ShieldCheck,
+  FlaskConical,
 } from 'lucide-react';
 import { AppTab, ShellMode, WorkshopTab } from '../utils/appShell';
 import { isLogoDataUrl } from '../utils/logo';
@@ -30,6 +32,7 @@ interface NavbarProps {
   workshopName: string;
   logoDataUrl?: string;
   isPlatformOwner: boolean;
+  canWrite: boolean;
 }
 
 const WORKSHOP_LINKS: Array<{ id: WorkshopTab; label: string }> = [
@@ -73,8 +76,61 @@ export const Navbar: React.FC<NavbarProps> = (props) => {
   if (props.mode === 'public' || props.mode === 'portal') {
     return <PublicBar {...props} />;
   }
+  if (props.mode === 'pending') {
+    return <PendingBar {...props} />;
+  }
   return <WorkshopBar {...props} />;
 };
+
+function PendingBar({
+  onEnterDemo,
+  onLogout,
+  isDark,
+  onToggleTheme,
+  workshopName,
+  logoDataUrl,
+}: NavbarProps) {
+  const name = workshopName || 'Tu taller';
+  return (
+    <header className="sticky top-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="flex items-center justify-between gap-3 min-h-16 py-2">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <BrandMark logoDataUrl={logoDataUrl} fallback={initials(name)} />
+            <div className="leading-tight min-w-0">
+              <span className="block text-base sm:text-lg font-black tracking-tight text-slate-900 dark:text-white truncate max-w-[10rem] sm:max-w-[16rem]">
+                {name}
+              </span>
+              <span className="block text-[10px] text-amber-600 dark:text-amber-400 font-semibold">
+                Cuenta en revisión
+              </span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
+            <IconButton
+              label={isDark ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro'}
+              onClick={onToggleTheme}
+            >
+              {isDark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+            </IconButton>
+            <button
+              type="button"
+              onClick={onEnterDemo}
+              className="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg shadow-xs whitespace-nowrap"
+            >
+              <FlaskConical className="w-4 h-4" />
+              <span className="hidden sm:inline">Probar demo</span>
+            </button>
+            <IconButton label="Cerrar sesión" onClick={onLogout}>
+              <LogOut className="w-4 h-4" />
+            </IconButton>
+          </div>
+        </div>
+      </div>
+    </header>
+  );
+}
 
 function PublicBar({ mode, onOpenAuthModal, onEnterDemo, onGoHome }: NavbarProps) {
   const home = (
@@ -180,6 +236,7 @@ function WorkshopBar({
   workshopName,
   logoDataUrl,
   isPlatformOwner,
+  canWrite,
 }: NavbarProps) {
   const isAccount = mode === 'account';
   const name = isAccount ? workshopName || 'Tu taller' : 'FixiTsch';
@@ -228,6 +285,20 @@ function WorkshopBar({
                 lowStockCount={lowStockCount}
               />
             ))}
+            {isAccount && isPlatformOwner && (
+              <button
+                type="button"
+                onClick={() => onSelectTab('platform')}
+                className={`whitespace-nowrap shrink-0 flex items-center gap-1.5 py-5 border-b-2 ${
+                  currentTab === 'platform'
+                    ? 'text-indigo-600 dark:text-indigo-400 font-bold border-indigo-600 dark:border-indigo-400'
+                    : 'border-transparent hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                <ShieldCheck className="w-3.5 h-3.5" />
+                <span>Plataforma</span>
+              </button>
+            )}
           </nav>
 
           <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
@@ -243,7 +314,9 @@ function WorkshopBar({
             <button
               type="button"
               onClick={onOpenNewOrder}
-              className="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100 rounded-lg shadow-sm whitespace-nowrap"
+              disabled={!canWrite}
+              title={!canWrite ? 'Tu cuenta está en solo lectura.' : undefined}
+              className="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100 rounded-lg shadow-sm whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Plus className="w-4 h-4" />
               <span className="hidden sm:inline">Nueva Orden</span>
@@ -285,6 +358,19 @@ function WorkshopBar({
               {link.id === 'orders' && activeOrdersCount > 0 ? ` (${activeOrdersCount})` : ''}
             </button>
           ))}
+          {isAccount && isPlatformOwner && (
+            <button
+              type="button"
+              onClick={() => onSelectTab('platform')}
+              className={`whitespace-nowrap shrink-0 ${
+                currentTab === 'platform'
+                  ? 'font-bold text-indigo-600 dark:text-indigo-400'
+                  : 'text-slate-600 dark:text-slate-400'
+              }`}
+            >
+              Plataforma
+            </button>
+          )}
         </div>
       </div>
     </header>

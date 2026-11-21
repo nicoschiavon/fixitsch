@@ -1,4 +1,12 @@
-import { DonorDevice, InventoryPart, RepairOrder, UserAccount, WorkshopSettings } from '../types';
+import {
+  AccountAccess,
+  DonorDevice,
+  InventoryPart,
+  RepairOrder,
+  TenantStatus,
+  UserAccount,
+  WorkshopSettings,
+} from '../types';
 
 export type ApiAccount = {
   id: string;
@@ -7,6 +15,7 @@ export type ApiAccount = {
   role: 'platform_owner' | 'workshop_owner';
   workshopName: string;
   createdAt: string;
+  access: AccountAccess;
 };
 
 export type WorkshopBundle = {
@@ -14,6 +23,22 @@ export type WorkshopBundle = {
   parts: InventoryPart[];
   donors: DonorDevice[];
   settings: WorkshopSettings;
+  access?: AccountAccess;
+};
+
+export type PlatformTenant = {
+  id: string;
+  workshopName: string;
+  ownerUsername: string;
+  ownerName: string;
+  status: TenantStatus;
+  access: AccountAccess;
+  createdAt: string;
+  trialStartedAt: string | null;
+  trialEndsAt: string | null;
+  plan: 'monthly' | 'yearly' | null;
+  currentPeriodEnd: string | null;
+  lastPaymentAt: string | null;
 };
 
 export class ApiError extends Error {
@@ -37,6 +62,7 @@ export function toUserAccount(user: ApiAccount): UserAccount {
     createdAt: user.createdAt,
     hasPersistence: true,
     planStatus: 'account',
+    access: user.access,
   };
 }
 
@@ -129,4 +155,47 @@ export function saveSettings(settings: WorkshopSettings) {
 
 export function clearWorkshop() {
   return request<WorkshopBundle>('/api/workshop/clear', { method: 'POST' });
+}
+
+export function inventoryCsvUrl() {
+  return '/api/workshop/export/inventory.csv';
+}
+
+export function listPlatformTenants() {
+  return request<{ tenants: PlatformTenant[] }>('/api/platform/tenants');
+}
+
+export function startPlatformTrial(tenantId: string) {
+  return request<{ ok: boolean; minutes: number }>(`/api/platform/tenants/${tenantId}/trial`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  });
+}
+
+export function extendPlatformTrial(tenantId: string, days = 15) {
+  return request<{ ok: boolean; days: number }>(`/api/platform/tenants/${tenantId}/extend`, {
+    method: 'POST',
+    body: JSON.stringify({ days }),
+  });
+}
+
+export function suspendPlatformTenant(tenantId: string) {
+  return request<{ ok: boolean }>(`/api/platform/tenants/${tenantId}/suspend`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  });
+}
+
+export function reactivatePlatformTenant(tenantId: string) {
+  return request<{ ok: boolean }>(`/api/platform/tenants/${tenantId}/reactivate`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  });
+}
+
+export function recordPlatformPayment(tenantId: string, plan: 'monthly' | 'yearly') {
+  return request<{ ok: boolean; plan: string }>(`/api/platform/tenants/${tenantId}/payment`, {
+    method: 'POST',
+    body: JSON.stringify({ plan, method: 'transfer' }),
+  });
 }

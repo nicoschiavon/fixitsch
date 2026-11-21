@@ -207,7 +207,7 @@ export const CheckoutModal: React.FC<CheckoutModalProps> = ({
           {success && (
             <div className="p-4 bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-200 rounded-xl text-xs flex items-center gap-2 font-semibold">
               <CheckCircle2 className="w-5 h-5 text-emerald-600" />
-              <span>¡Pago acreditado exitosamente! Tu cuenta FixiTsch Pro ya está activa.</span>
+              <span>Simulación: el pago no activa una cuenta real. La cuenta principal acredita la transferencia desde la consola de plataforma.</span>
             </div>
           )}
 

@@ -95,14 +95,15 @@ export const TrialModal: React.FC<TrialModalProps> = ({
 
           <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/20 text-white text-[11px] font-semibold mb-2">
             <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-            <span>Prueba Gratuita por 15 Días</span>
+            <span>Demo con datos de tu taller</span>
           </div>
 
           <h3 className="text-xl font-bold tracking-tight">
-            Comenzar con FixiTsch Pro
+            Probar FixiTsch con tus datos
           </h3>
           <p className="text-xs text-indigo-100 mt-1">
-            Acceso completo e ilimitado por 15 días a todas las funciones del software. Sin tarjeta de crédito requerida.
+            Esta demo corre en tu navegador y no crea una cuenta real. Para la prueba de 15 días,
+            creá una cuenta y la cuenta principal la aprueba.
           </p>
         </div>
 
@@ -223,15 +224,15 @@ export const TrialModal: React.FC<TrialModalProps> = ({
           <div className="p-3 bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700 rounded-lg space-y-1.5 text-[11px] text-slate-600 dark:text-slate-400">
             <div className="flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-              <span>15 días de prueba completa con órdenes, inventario y despiece ilimitados.</span>
+              <span>Todas las funciones del taller disponibles en la demo.</span>
             </div>
             <div className="flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-              <span>Tus datos y órdenes se guardan automáticamente en tu navegador.</span>
+              <span>Los cambios de la demo viven solo en esta sesión del navegador.</span>
             </div>
             <div className="flex items-center gap-2">
               <ShieldCheck className="w-4 h-4 text-indigo-600 shrink-0" />
-              <span>Luego podrás suscribirte al Plan Pro por solo <strong>$30.000 ARS/mes</strong>.</span>
+              <span>Cuando quieras, creá una cuenta y la cuenta principal activa la prueba.</span>
             </div>
           </div>
 
@@ -247,7 +248,7 @@ export const TrialModal: React.FC<TrialModalProps> = ({
               type="submit"
               className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg shadow-sm cursor-pointer transition-all"
             >
-              Activar Mi Prueba de 15 Días
+              Entrar al demo con estos datos
             </button>
           </div>
         </form>

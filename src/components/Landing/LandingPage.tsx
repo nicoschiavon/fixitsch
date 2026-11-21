@@ -103,7 +103,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
         <div className="pt-4 flex flex-wrap items-center justify-center gap-6 text-xs text-slate-500 dark:text-slate-400">
           <div className="flex items-center gap-1.5">
             <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-            <span>Acceso completo bonificado por el momento</span>
+            <span>Prueba de 15 días aprobada por la cuenta principal</span>
           </div>
           <div className="flex items-center gap-1.5">
             <CheckCircle2 className="w-4 h-4 text-emerald-500" />
@@ -111,7 +111,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           </div>
           <div className="flex items-center gap-1.5">
             <CheckCircle2 className="w-4 h-4 text-emerald-500" />
-            <span>Persistencia completa al registrarte</span>
+            <span>Tus datos persisten en PostgreSQL al aprobar la prueba</span>
           </div>
         </div>
 

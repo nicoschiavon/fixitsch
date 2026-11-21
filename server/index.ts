@@ -4,12 +4,15 @@ import type { Request, Response, NextFunction } from 'express';
 import { pool, withTenant } from './db.ts';
 import { hashPassword, newSessionToken, verifyPassword } from './password.ts';
 import { emptySettings, sanitizeLogoDataUrl, type WorkshopSettings } from './settings.ts';
+import { resolveAccess, type Access, type Plan, type TenantStatus } from './access.ts';
+import { isPlan } from './platform.ts';
 
 const PORT = Number(process.env.PORT || 4000);
 const SESSION_COOKIE = 'fixitsch_session';
 const SESSION_DAYS = 14;
 const ADMIN_USERNAME = (process.env.ADMIN_USERNAME || 'admin').toLowerCase();
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123!';
+const TRIAL_MINUTES = numberIn(process.env.TRIAL_MINUTES, 1, 525600, 15 * 24 * 60);
 
 type AccountRole = 'platform_owner' | 'workshop_owner';
 
@@ -21,6 +24,10 @@ type Account = {
   workshopName: string;
   createdAt: string;
   tenantId: string;
+  tenantStatus: TenantStatus;
+  trialEndsAt: Date | null;
+  plan: Plan | null;
+  currentPeriodEnd: Date | null;
 };
 
 class HttpError extends Error {
@@ -95,7 +102,8 @@ app.post('/api/auth/register', async (req, res, next) => {
     }
     if (!row) throw new HttpError(500, 'No se pudo crear la cuenta.');
 
-    const account = mapAccount(row);
+    const account = await findAccount(username);
+    if (!account) throw new HttpError(500, 'No se pudo crear la cuenta.');
     await startSession(res, account);
     res.status(201).json({ user: publicAccount(account) });
   } catch (error) {
@@ -126,9 +134,23 @@ app.get('/api/auth/me', async (req, res, next) => {
 
 app.get('/api/workshop', async (req, res, next) => {
   try {
-    const account = await requireAccount(req);
+    const account = await requireAccess(req, 'read');
     const data = await readWorkshop(account.tenantId, account.workshopName);
-    res.json(data);
+    res.json({ ...data, access: accessFor(account) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/workshop/export/inventory.csv', async (req, res, next) => {
+  try {
+    const account = await requireAccess(req, 'export');
+    const data = await readWorkshop(account.tenantId, account.workshopName);
+    const csv = inventoryCsv(data.parts);
+    const filename = `inventario-${slug(account.workshopName)}-${new Date().toISOString().slice(0, 10)}.csv`;
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(`\uFEFF${csv}`);
   } catch (error) {
     next(error);
   }
@@ -136,7 +158,7 @@ app.get('/api/workshop', async (req, res, next) => {
 
 app.put('/api/workshop/orders', async (req, res, next) => {
   try {
-    const account = await requireAccount(req);
+    const account = await requireAccess(req, 'write');
     const rows = asRecords(req.body?.orders, 'Órdenes');
     await replaceCollection(account.tenantId, 'repair_orders', rows);
     res.json({ ok: true });
@@ -147,7 +169,7 @@ app.put('/api/workshop/orders', async (req, res, next) => {
 
 app.put('/api/workshop/parts', async (req, res, next) => {
   try {
-    const account = await requireAccount(req);
+    const account = await requireAccess(req, 'write');
     const rows = asRecords(req.body?.parts, 'Repuestos');
     await replaceCollection(account.tenantId, 'inventory_parts', rows);
     res.json({ ok: true });
@@ -158,7 +180,7 @@ app.put('/api/workshop/parts', async (req, res, next) => {
 
 app.put('/api/workshop/donors', async (req, res, next) => {
   try {
-    const account = await requireAccount(req);
+    const account = await requireAccess(req, 'write');
     const rows = asRecords(req.body?.donors, 'Equipos');
     await replaceCollection(account.tenantId, 'donor_devices', rows);
     res.json({ ok: true });
@@ -169,7 +191,7 @@ app.put('/api/workshop/donors', async (req, res, next) => {
 
 app.put('/api/workshop/settings', async (req, res, next) => {
   try {
-    const account = await requireAccount(req);
+    const account = await requireAccess(req, 'write');
     const settings = asSettings(req.body?.settings, account.workshopName);
     await withTenant(account.tenantId, async (client) => {
       await client.query(
@@ -187,7 +209,7 @@ app.put('/api/workshop/settings', async (req, res, next) => {
 
 app.post('/api/workshop/clear', async (req, res, next) => {
   try {
-    const account = await requireAccount(req);
+    const account = await requireAccess(req, 'write');
     const settings = emptySettings(account.workshopName);
     await withTenant(account.tenantId, async (client) => {
       await client.query('DELETE FROM repair_orders WHERE tenant_id = $1::uuid', [account.tenantId]);
@@ -206,9 +228,186 @@ app.post('/api/workshop/clear', async (req, res, next) => {
   }
 });
 
+// Plano plataforma: solo metadatos de suscripción, nunca datos del taller.
+app.get('/api/platform/tenants', async (req, res, next) => {
+  try {
+    const account = await requirePlatform(req);
+    const result = await pool.query(
+      `SELECT tenant_id, workshop_name, owner_username, owner_name, status,
+              trial_started_at, trial_ends_at, plan, current_period_end, created_at, last_payment_at
+       FROM app_platform_list_tenants($1::uuid)`,
+      [account.id]
+    );
+    res.json({
+      tenants: result.rows.map((row) => {
+        const access = resolveAccess({
+          role: 'workshop_owner',
+          status: row.status as TenantStatus,
+          trialEndsAt: row.trial_ends_at,
+          plan: row.plan,
+          currentPeriodEnd: row.current_period_end,
+          now: new Date(),
+        });
+        return {
+          id: row.tenant_id,
+          workshopName: row.workshop_name,
+          ownerUsername: row.owner_username,
+          ownerName: row.owner_name,
+          status: row.status,
+          access,
+          createdAt: row.created_at,
+          trialStartedAt: row.trial_started_at,
+          trialEndsAt: row.trial_ends_at,
+          plan: row.plan,
+          currentPeriodEnd: row.current_period_end,
+          lastPaymentAt: row.last_payment_at,
+        };
+      }),
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/platform/tenants/:id/trial', async (req, res, next) => {
+  try {
+    const account = await requirePlatform(req);
+    const minutes = numberIn(req.body?.minutes, 1, 525600, TRIAL_MINUTES);
+    await pool.query('SELECT app_platform_start_trial($1::uuid, $2::uuid, $3)', [
+      account.id,
+      tenantId(req),
+      minutes,
+    ]);
+    res.json({ ok: true, minutes });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/platform/tenants/:id/extend', async (req, res, next) => {
+  try {
+    const account = await requirePlatform(req);
+    const days = numberIn(req.body?.days, 1, 3650, 15);
+    await pool.query('SELECT app_platform_extend_trial($1::uuid, $2::uuid, $3)', [
+      account.id,
+      tenantId(req),
+      days,
+    ]);
+    res.json({ ok: true, days });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/platform/tenants/:id/suspend', async (req, res, next) => {
+  try {
+    const account = await requirePlatform(req);
+    await pool.query('SELECT app_platform_suspend($1::uuid, $2::uuid)', [account.id, tenantId(req)]);
+    res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/platform/tenants/:id/reactivate', async (req, res, next) => {
+  try {
+    const account = await requirePlatform(req);
+    await pool.query('SELECT app_platform_reactivate($1::uuid, $2::uuid)', [account.id, tenantId(req)]);
+    res.json({ ok: true });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/platform/tenants/:id/payment', async (req, res, next) => {
+  try {
+    const account = await requirePlatform(req);
+    const plan = req.body?.plan;
+    if (!isPlan(plan)) throw new HttpError(400, 'Elegí el plan mensual o anual.');
+    const method = req.body?.method === 'card' ? 'card' : 'transfer';
+    await pool.query('SELECT app_platform_record_payment($1::uuid, $2::uuid, $3, $4)', [
+      account.id,
+      tenantId(req),
+      plan,
+      method,
+    ]);
+    res.json({ ok: true, plan });
+  } catch (error) {
+    next(error);
+  }
+});
+
+function tenantId(req: Request): string {
+  const value = String(req.params?.id || '');
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) {
+    throw new HttpError(400, 'La cuenta indicada no es válida.');
+  }
+  return value;
+}
+
+function slug(value: string): string {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40) || 'taller';
+}
+
+function inventoryCsv(parts: Array<Record<string, unknown>>): string {
+  const header = [
+    'SKU',
+    'Nombre',
+    'Categoría',
+    'Modelos compatibles',
+    'Tipo de equipo',
+    'Stock',
+    'Stock mínimo',
+    'Costo',
+    'Precio',
+    'Ubicación',
+    'Origen',
+    'Notas',
+  ];
+  const rows = parts.map((part) => [
+    part.sku,
+    part.name,
+    part.category,
+    Array.isArray(part.compatibleModels) ? part.compatibleModels.join(' / ') : part.compatibleModels,
+    part.deviceType,
+    part.stock,
+    part.minStock,
+    part.costPrice,
+    part.salePrice,
+    part.location,
+    part.source,
+    part.notes,
+  ]);
+  return [header, ...rows].map((row) => row.map(csvCell).join(',')).join('\r\n');
+}
+
+function csvCell(value: unknown): string {
+  const text = value == null ? '' : String(value);
+  return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
 app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
   if (error instanceof HttpError) {
     res.status(error.status).json({ error: error.message });
+    return;
+  }
+  const code = errorCode(error);
+  if (code === '42501') {
+    res.status(403).json({ error: 'No tenés permiso para esa acción.' });
+    return;
+  }
+  if (code === 'P0002') {
+    res.status(404).json({ error: 'No encontramos esa cuenta.' });
+    return;
+  }
+  if (code === '22023') {
+    res.status(400).json({ error: 'Los datos de la operación no son válidos.' });
     return;
   }
   console.error('request failed');
@@ -242,6 +441,10 @@ type AccountRow = {
   tenant_id: string;
   workshop_name: string;
   created_at: Date | string;
+  tenant_status: TenantStatus;
+  trial_ends_at: Date | string | null;
+  plan: Plan | null;
+  current_period_end: Date | string | null;
 };
 
 type StoredAccount = Account & { passwordHash: string };
@@ -255,8 +458,23 @@ function mapAccount(row: AccountRow, passwordHash = ''): StoredAccount {
     workshopName: row.workshop_name,
     createdAt: new Date(row.created_at).toISOString(),
     tenantId: row.tenant_id,
+    tenantStatus: row.tenant_status,
+    trialEndsAt: row.trial_ends_at ? new Date(row.trial_ends_at) : null,
+    plan: row.plan,
+    currentPeriodEnd: row.current_period_end ? new Date(row.current_period_end) : null,
     passwordHash,
   };
+}
+
+function accessFor(account: Account): Access {
+  return resolveAccess({
+    role: account.role,
+    status: account.tenantStatus,
+    trialEndsAt: account.trialEndsAt,
+    plan: account.plan,
+    currentPeriodEnd: account.currentPeriodEnd,
+    now: new Date(),
+  });
 }
 
 function publicAccount(account: Account) {
@@ -267,12 +485,14 @@ function publicAccount(account: Account) {
     role: account.role,
     workshopName: account.workshopName,
     createdAt: account.createdAt,
+    access: accessFor(account),
   };
 }
 
 async function findAccount(username: string): Promise<StoredAccount | null> {
   const result = await pool.query(
-    `SELECT identity_id, username, password_hash, name, role, tenant_id, workshop_name, created_at
+    `SELECT identity_id, username, password_hash, name, role, tenant_id, workshop_name, created_at,
+            tenant_status, trial_ends_at, plan, current_period_end
      FROM app_login_lookup($1)`,
     [username]
   );
@@ -285,7 +505,8 @@ async function accountFromRequest(req: Request): Promise<Account | null> {
   const token = readCookie(req, SESSION_COOKIE);
   if (!token) return null;
   const result = await pool.query(
-    `SELECT identity_id, username, name, role, tenant_id, workshop_name, created_at
+    `SELECT identity_id, username, name, role, tenant_id, workshop_name, created_at,
+            tenant_status, trial_ends_at, plan, current_period_end
      FROM app_resolve_session($1)`,
     [tokenHash(token)]
   );
@@ -296,6 +517,34 @@ async function accountFromRequest(req: Request): Promise<Account | null> {
 async function requireAccount(req: Request): Promise<Account> {
   const account = await accountFromRequest(req);
   if (!account) throw new HttpError(401, 'Tenés que iniciar sesión.');
+  return account;
+}
+
+async function requireAccess(req: Request, level: 'read' | 'write' | 'export'): Promise<Account> {
+  const account = await requireAccount(req);
+  const access = accessFor(account);
+  const allowed =
+    level === 'read' ? access.canRead : level === 'write' ? access.canWrite : access.canExport;
+  if (!allowed) {
+    if (access.reason === 'pending') {
+      throw new HttpError(403, 'Tu cuenta está esperando la aprobación de la prueba.');
+    }
+    if (level === 'export') {
+      throw new HttpError(403, 'No podés exportar con esta cuenta.');
+    }
+    throw new HttpError(
+      403,
+      'Tu cuenta está en solo lectura. Podés descargar tu inventario o regularizar la suscripción.'
+    );
+  }
+  return account;
+}
+
+async function requirePlatform(req: Request): Promise<Account> {
+  const account = await requireAccount(req);
+  if (account.role !== 'platform_owner') {
+    throw new HttpError(403, 'Solo la cuenta principal puede administrar suscripciones.');
+  }
   return account;
 }
 

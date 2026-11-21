@@ -6,7 +6,8 @@ import {
   Building,
   Shield,
   ImagePlus,
-  Download
+  Download,
+  AlertTriangle
 } from 'lucide-react';
 import { WorkshopSettings } from '../../types';
 import { isLogoDataUrl, LOGO_ACCEPT, readLogoFile } from '../../utils/logo';
@@ -19,6 +20,7 @@ interface SettingsModalProps {
   persisted?: boolean;
   onClearData: () => void | Promise<void>;
   onExportData: () => void;
+  readOnly?: boolean;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -29,7 +31,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onReloadAllData,
   persisted = false,
   onClearData,
-  onExportData
+  onExportData,
+  readOnly = false
 }) => {
   const [formData, setFormData] = useState<WorkshopSettings>({ ...settings });
   const [logoError, setLogoError] = useState('');
@@ -59,6 +62,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (readOnly) return;
     onSaveSettings(formData);
     alert('Configuración guardada correctamente.');
     onClose();
@@ -94,6 +98,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         </div>
 
         <form onSubmit={handleSubmit} className="p-6 overflow-y-auto space-y-6 text-xs text-slate-700 dark:text-slate-300">
+          {readOnly && (
+            <div className="flex items-start gap-2 rounded-lg border border-rose-200 dark:border-rose-900 bg-rose-50 dark:bg-rose-950/40 px-3 py-2 text-rose-700 dark:text-rose-300">
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>
+                Tu cuenta está en solo lectura. Podés ver y exportar, pero no modificar la
+                configuración hasta regularizar la suscripción.
+              </span>
+            </div>
+          )}
+
+          <fieldset disabled={readOnly} className="space-y-6 border-0 p-0 m-0 min-w-0">
           {/* Workshop Details */}
           <div className="space-y-3">
             <h4 className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
@@ -253,6 +268,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               />
             </div>
           </div>
+          </fieldset>
 
           {/* Backup & Restore */}
           <div className="space-y-3 pt-3 border-t border-slate-200 dark:border-slate-800">
@@ -274,7 +290,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <button
                 type="button"
                 onClick={handleReset}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 text-rose-700 dark:text-rose-300 rounded-md border border-rose-200 dark:border-rose-900 font-semibold cursor-pointer"
+                disabled={readOnly}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 text-rose-700 dark:text-rose-300 rounded-md border border-rose-200 dark:border-rose-900 font-semibold cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <RefreshCw className="w-3.5 h-3.5" />
                 <span>{persisted ? 'Vaciar datos de esta cuenta' : 'Restablecer datos demo'}</span>
@@ -292,9 +309,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </button>
             <button
               type="submit"
-              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-md shadow-xs cursor-pointer"
+              disabled={readOnly}
+              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-md shadow-xs cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Guardar Configuración
+              {readOnly ? 'Solo lectura' : 'Guardar Configuración'}
             </button>
           </div>
         </form>

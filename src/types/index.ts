@@ -194,6 +194,28 @@ export interface ProjectItem {
 
 export type UserRole = 'guest_demo' | 'registered_full_access' | 'admin';
 
+export type TenantStatus = 'sandbox' | 'pending' | 'trial' | 'active' | 'expired' | 'cancelled';
+
+export type AccessReason =
+  | 'sandbox'
+  | 'pending'
+  | 'trial'
+  | 'trial_expired'
+  | 'active'
+  | 'past_due'
+  | 'suspended';
+
+export type AccountAccess = {
+  status: TenantStatus;
+  reason: AccessReason;
+  canRead: boolean;
+  canWrite: boolean;
+  canExport: boolean;
+  trialEndsAt: string | null;
+  plan: 'monthly' | 'yearly' | null;
+  currentPeriodEnd: string | null;
+};
+
 export interface UserAccount {
   id: string;
   username: string;
@@ -206,4 +228,5 @@ export interface UserAccount {
   createdAt: string;
   hasPersistence: boolean;
   planStatus: 'demo_trial' | 'full_access_free_promo' | 'account';
+  access?: AccountAccess;
 }

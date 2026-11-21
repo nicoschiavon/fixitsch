@@ -2,7 +2,7 @@
 
 Hechos vigentes y decisiones ya tomadas. Actualizar este archivo cuando cambie el estado real del sistema o se cierre una decisión. No reescribir historia para que coincida con un cambio a medias.
 
-Última revisión: 2026-11-12. Cuentas reales en PostgreSQL. La barra depende de la sesión.
+Última revisión: 2026-11-16. Consola de plataforma y acceso por suscripción implementados.
 
 ## Origen
 
@@ -16,15 +16,16 @@ Dueño del producto: Nico Schiavon. Su identidad de plataforma no debe quedar ha
 | --- | --- |
 | UI del taller | Funcional en el cliente: órdenes, inventario, despiece, historial, portal, ticket, ajustes, avisos. |
 | Persistencia | Con sesión, PostgreSQL. Sin sesión, demo en memoria. `localStorage` ya no es la fuente de las cuentas. |
-| Auth | Usuario y contraseña contra PostgreSQL. Cookie httpOnly. La cuenta `admin` / `admin123!` es la principal y no lee otros talleres. |
+| Auth | Usuario y contraseña contra PostgreSQL. Cookie httpOnly. La cuenta `admin` / `admin123!` es la principal y no lee otros talleres. Un alta nueva queda `pending` hasta que la principal acepte la prueba. |
 | Datos de taller | API en `server/`. Cada fila lleva `tenant_id` y RLS. Una cuenta nueva nace vacía. La demo sin sesión sigue en memoria. |
-| Prueba de 15 días | El formulario local sigue en la UI. No crea cuentas ni corta la escritura. |
-| Checkout | Simulado con `setTimeout`. Planes `mensual_30k` y `anual_300k`. Mercado Pago no está integrado. |
+| Prueba | La duración la define el servidor (`TRIAL_MINUTES`: 5 en Docker local, 21600 = 15 días). Arranca cuando la cuenta principal la acepta. Al vencer queda en solo lectura y puede exportar el inventario en CSV. |
+| Checkout | El modal de la landing sigue simulado y no activa nada. La consola del creador acredita transferencias (`monthly` / `yearly`) y extiende el período. Mercado Pago no está integrado. |
+| Consola de plataforma | Solo `platform_owner`. Lista talleres y permite aceptar o extender la prueba, suspender, reactivar y acreditar transferencias. No muestra PIN, documento, IMEI ni datos de clientes. |
 | Backend | `server/` + Postgres en Docker. El rol `fixitsch_app` no saltea RLS y no lee otras cuentas. |
 | Gemini | Declarado en `metadata.json`. No se usa en `src/`. |
 | Portfolio | `src/data/portfolioData.ts` alimenta la landing. No es el dominio del taller. |
 
-La contradicción a recordar: la UI dice “prueba 15 días” y a la vez “acceso completo bonificado”. La regla de producto es la de `CONSTITUTION.md`. El código todavía no la cumple.
+El acceso ya se decide en el servidor: `resolveAccess` corta la escritura de cuentas pendientes, vencidas y suspendidas, y el CSV es del propio taller. El modal local de la landing sigue siendo una demo y no crea cuentas.
 
 ## Decisión de datos
 
@@ -41,7 +42,7 @@ Detalle en `docs/ARCHITECTURE.md`.
 ## Decisiones cerradas
 
 1. La cuenta del creador es rol de plataforma, más un taller sandbox para probar. No es un tenant con permisos extra sobre los demás.
-2. La prueba dura 15 días, una por identidad de Google, con datos propios persistidos. Al vencer se corta la escritura, no el export.
+2. La prueba dura 15 días y arranca cuando la cuenta principal la acepta. Al vencer se corta la escritura, no el export. En local, `TRIAL_MINUTES=5` permite ver el vencimiento sin esperar.
 3. El pago lo confirma el servidor. Mercado Pago es el canal principal. La transferencia la acredita el creador.
 4. El modo demo público se mantiene: datos de muestra, sin persistencia, sin mezclarse con cuentas reales.
 5. Precios vigentes: $30.000 ARS / mes y $300.000 ARS / año. No inventar otros planes.
@@ -51,7 +52,7 @@ Detalle en `docs/ARCHITECTURE.md`.
 ## Qué no hacer en el próximo cambio
 
 - No seguir guardando cuentas, pruebas ni pagos en `localStorage` como si fuera el sistema.
-- No dar `hasPersistence: true` a cualquiera que pase por el modal de Google.
+- No dar acceso de escritura a una cuenta recién creada: nace `pending` hasta que la principal acepte la prueba.
 - No crear tablas sin `tenant_id` en datos de taller.
 - No mostrar PIN, documento o IMEI en una futura consola de admin.
 - No borrar el flujo de demo al conectar cuentas reales. Conviven.
@@ -63,12 +64,12 @@ Orden recomendado, detallado en `docs/ROADMAP.md`:
 
 1. Identidad Google + tenant + membresía, reemplazando el modal simulado.
 2. Persistencia real de órdenes, inventario, despiece y ajustes, con aislamiento.
-3. Prueba de 15 días aplicada en el servidor.
-4. Consola del creador para suscripciones.
-5. Mercado Pago y acreditación manual de transferencias.
+3. Prueba aplicada en el servidor. Hecho.
+4. Consola del creador para suscripciones. Hecha para transferencia y estados.
+5. Mercado Pago y webhook. Pendiente.
 6. Recién ahí, pulir funciones de taller que dependan de datos confiables.
 
-Hecho: cuentas con usuario y contraseña, Postgres con RLS, alta de taller vacío y admin sin acceso a datos ajenos. Falta el panel de plataforma del creador y aplicar el corte de los 15 días.
+Hecho: cuentas con usuario y contraseña, Postgres con RLS, alta `pending`, aprobación de la prueba, consola de plataforma, bloqueo de escritura al vencer y export CSV del inventario. Falta Mercado Pago y el webhook.
 
 ## Preguntas abiertas
 

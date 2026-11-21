@@ -39,6 +39,8 @@ services:
       ADMIN_USERNAME: 
       ADMIN_PASSWORD: 
       PORT: 4000
+      # Duración de la prueba en minutos. 5 para probar el vencimiento; 21600 = 15 días.
+      TRIAL_MINUTES: 5
     depends_on:
       migrate:
         condition: service_completed_successfully

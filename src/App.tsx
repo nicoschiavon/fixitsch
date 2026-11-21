@@ -7,12 +7,14 @@ import {
   OrderStatus,
   SalvagePart,
   TrialAccount,
-  UserAccount
+  UserAccount,
+  AccountAccess
 } from './types';
 import { loadStoredTrial, saveStoredTrial } from './utils/storage';
 import {
   clearWorkshop,
   currentAccount,
+  inventoryCsvUrl,
   loadWorkshop,
   logout as logoutAccount,
   saveDonors,
@@ -38,6 +40,8 @@ import { SettingsModal } from './components/Settings/SettingsModal';
 import { TrialModal } from './components/Subscription/TrialModal';
 import { CheckoutModal } from './components/Subscription/CheckoutModal';
 import { AuthModal } from './components/Auth/AuthModal';
+import { PendingAccessScreen } from './components/Pending/PendingAccessScreen';
+import { PlatformConsole } from './components/Platform/PlatformConsole';
 import {
   Sparkles,
   Zap,
@@ -45,7 +49,9 @@ import {
   AlertTriangle,
   RotateCcw,
   CheckCircle2,
-  Lock
+  Lock,
+  Download,
+  Clock
 } from 'lucide-react';
 
 export default function App() {
@@ -66,16 +72,14 @@ export default function App() {
       .then(async (account) => {
         if (cancelled || !account) return;
         const user = toUserAccount(account);
-        const data = await loadWorkshop();
-        if (cancelled) return;
         accountRef.current = user;
         setCurrentUser(user);
         setDemoActive(false);
-        setOrders(data.orders);
-        setParts(data.parts);
-        setDonors(data.donors);
-        setSettings(data.settings);
         setCurrentTab((tab) => (tab === 'landing' ? 'orders' : tab));
+        if (!user.access?.canRead) return;
+        const data = await loadWorkshop();
+        if (cancelled) return;
+        applyWorkshop(data);
       })
       .catch(() => {
         accountRef.current = null;
@@ -90,6 +94,11 @@ export default function App() {
 
   const [currentTab, setCurrentTab] = useState<AppTab>('landing');
   const [demoActive, setDemoActive] = useState(false);
+
+  const access = currentUser?.access;
+  const accountPending = access?.reason === 'pending';
+  const readOnly = Boolean(currentUser && access && access.canRead && !access.canWrite);
+  const canWrite = !currentUser || (access ? access.canWrite : true);
 
   // Dark mode
   const [isDark, setIsDark] = useState<boolean>(() => {
@@ -146,11 +155,17 @@ export default function App() {
     parts: InventoryPart[];
     donors: DonorDevice[];
     settings: WorkshopSettings;
+    access?: AccountAccess;
   }) => {
     setOrders(data.orders);
     setParts(data.parts);
     setDonors(data.donors);
     setSettings(data.settings);
+    if (data.access && accountRef.current) {
+      const updated: UserAccount = { ...accountRef.current, access: data.access };
+      accountRef.current = updated;
+      setCurrentUser(updated);
+    }
   };
 
   const clearOrderQuery = () => {
@@ -170,7 +185,8 @@ export default function App() {
   };
 
   const enterDemo = (tab: AppTab = 'orders') => {
-    if (accountRef.current) {
+    const pending = accountRef.current?.access?.reason === 'pending';
+    if (accountRef.current && !pending) {
       setCurrentTab(tab === 'landing' ? 'orders' : tab);
       return;
     }
@@ -215,8 +231,10 @@ export default function App() {
     setCurrentUser(user);
     setDemoActive(false);
     clearOrderQuery();
-    applyWorkshop(await loadWorkshop());
     setCurrentTab('orders');
+    if (user.access?.canRead) {
+      applyWorkshop(await loadWorkshop());
+    }
   };
 
   const handleLogout = async () => {
@@ -246,6 +264,7 @@ export default function App() {
 
   const persist = (task: () => Promise<unknown>) => {
     if (!accountRef.current) return;
+    if (accountRef.current.access && !accountRef.current.access.canWrite) return;
     saveChain.current = saveChain.current
       .then(task)
       .catch(() => {
@@ -253,22 +272,41 @@ export default function App() {
       });
   };
 
+  const guardWrite = () => {
+    if (readOnly) {
+      alert(
+        'Tu cuenta está en solo lectura. Podés descargar tu inventario en CSV o regularizar la suscripción.'
+      );
+      return false;
+    }
+    return true;
+  };
+
+  const handleOpenNewOrder = () => {
+    if (!guardWrite()) return;
+    setIsNewOrderOpen(true);
+  };
+
   const handleUpdateOrders = (newOrders: RepairOrder[]) => {
+    if (!guardWrite()) return;
     setOrders(newOrders);
     persist(() => saveOrders(newOrders));
   };
 
   const handleUpdateParts = (newParts: InventoryPart[]) => {
+    if (!guardWrite()) return;
     setParts(newParts);
     persist(() => saveParts(newParts));
   };
 
   const handleUpdateDonors = (newDonors: DonorDevice[]) => {
+    if (!guardWrite()) return;
     setDonors(newDonors);
     persist(() => saveDonors(newDonors));
   };
 
   const handleSaveSettings = (newSettings: WorkshopSettings) => {
+    if (!guardWrite()) return;
     setSettings(newSettings);
     persist(() => saveSettings(newSettings));
   };
@@ -280,6 +318,7 @@ export default function App() {
   };
 
   const handleClearAccount = async () => {
+    if (!guardWrite()) return;
     if (!accountRef.current) {
       setOrders(INITIAL_ORDERS);
       setParts(INITIAL_PARTS);
@@ -336,6 +375,7 @@ export default function App() {
   };
 
   const handleQuickChangeStatus = (orderId: string, newStatus: OrderStatus) => {
+    if (!guardWrite()) return;
     const order = orders.find((o) => o.id === orderId);
     if (!order) return;
 
@@ -369,6 +409,7 @@ export default function App() {
     channel: 'whatsapp' | 'email',
     messageSummary: string
   ) => {
+    if (!guardWrite()) return;
     const order = orders.find((o) => o.id === orderId);
     if (!order) return;
 
@@ -407,6 +448,7 @@ export default function App() {
 
   // Teardown / Scrap Harvest Handler
   const handleSalvageToInventory = (donor: DonorDevice, part: SalvagePart) => {
+    if (!guardWrite()) return;
     const newInventoryPart: InventoryPart = {
       id: `part-rec-${Date.now()}`,
       sku: `REC-${donor.code}-${Date.now().toString().slice(-4)}`,
@@ -478,10 +520,21 @@ export default function App() {
   const lastOrderNumber = orders[0]?.orderNumber || 'ORD-1045';
   const shellMode = resolveShellMode({
     hasAccount: Boolean(currentUser),
+    accountPending,
     demoActive,
     hasPortalQuery: Boolean(portalOrderQuery),
   });
   const section = visibleSection(shellMode, currentTab);
+  const navbarTab: AppTab =
+    section === 'portal'
+      ? 'client_portal'
+      : section === 'landing'
+        ? 'landing'
+        : section === 'pending'
+          ? 'orders'
+          : section;
+  const accessDeadline =
+    access?.reason === 'past_due' ? access.currentPeriodEnd : access?.trialEndsAt;
 
   if (!authReady) {
     return (
@@ -496,9 +549,9 @@ export default function App() {
       {/* Top Navbar */}
       <Navbar
         mode={shellMode}
-        currentTab={section === 'portal' ? 'client_portal' : section === 'landing' ? 'landing' : section}
+        currentTab={navbarTab}
         onSelectTab={setCurrentTab}
-        onOpenNewOrder={() => setIsNewOrderOpen(true)}
+        onOpenNewOrder={handleOpenNewOrder}
         onOpenSettings={() => setIsSettingsOpen(true)}
         onOpenAuthModal={handleOpenAuth}
         onEnterDemo={() => enterDemo('orders')}
@@ -509,10 +562,48 @@ export default function App() {
         onToggleTheme={() => setIsDark(!isDark)}
         activeOrdersCount={activeOrdersCount}
         lowStockCount={lowStockCount}
-        workshopName={settings.workshopName}
-        logoDataUrl={settings.logoDataUrl}
+        workshopName={accountPending ? currentUser?.workshopName || settings.workshopName : settings.workshopName}
+        logoDataUrl={accountPending ? undefined : settings.logoDataUrl}
         isPlatformOwner={currentUser?.role === 'admin'}
+        canWrite={canWrite}
       />
+
+      {/* READ-ONLY / TRIAL BANNERS */}
+      {shellMode === 'account' && readOnly && (
+        <div className="bg-rose-600 text-white text-xs border-b border-rose-700">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>
+                <strong>Solo lectura:</strong>{' '}
+                {access?.reason === 'suspended'
+                  ? 'la cuenta está suspendida.'
+                  : `el acceso venció${accessDeadline ? ` el ${formatAccessDate(accessDeadline)}` : ''}.`}{' '}
+                Podés ver y exportar, no editar.
+              </span>
+            </div>
+            <a
+              href={inventoryCsvUrl()}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-white text-rose-700 font-bold rounded-md hover:bg-rose-50 whitespace-nowrap"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Descargar inventario (CSV)</span>
+            </a>
+          </div>
+        </div>
+      )}
+
+      {shellMode === 'account' && access?.reason === 'trial' && (
+        <div className="bg-indigo-600 text-white text-xs border-b border-indigo-700">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2 flex items-center gap-2">
+            <Clock className="w-4 h-4 shrink-0" />
+            <span>
+              <strong>Prueba activa</strong> hasta el {formatAccessDate(access.trialEndsAt)}. Después
+              queda en solo lectura.
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* PERMISSIONS & DATA PERSISTENCE STATUS STRIP */}
       {(shellMode === 'demo' || shellMode === 'account') && (
@@ -594,6 +685,17 @@ export default function App() {
           />
         )}
 
+        {section === 'pending' && (
+          <PendingAccessScreen
+            workshopName={currentUser?.workshopName || settings.workshopName || ''}
+            onEnterDemo={() => enterDemo('orders')}
+            onRefresh={() => window.location.reload()}
+            onLogout={handleLogout}
+          />
+        )}
+
+        {section === 'platform' && currentUser?.role === 'admin' && <PlatformConsole />}
+
         {section === 'portal' && shellMode === 'portal' && (
           <CustomerPortalView
             orders={orders}
@@ -610,7 +712,7 @@ export default function App() {
             orders={orders}
             settings={settings}
             onSelectOrder={(ord) => setSelectedOrderForDetail(ord)}
-            onOpenNewOrder={() => setIsNewOrderOpen(true)}
+            onOpenNewOrder={handleOpenNewOrder}
             onOpenNotification={(ord, channel) =>
               setNotificationTarget({ order: ord, channel })
             }
@@ -697,6 +799,10 @@ export default function App() {
                     Crear cuenta
                   </button>
                 </>
+              ) : shellMode === 'pending' ? (
+                <button onClick={handleLogout} className="text-rose-600 hover:underline">
+                  Cerrar sesión
+                </button>
               ) : (
                 <>
                   <button
@@ -797,6 +903,7 @@ export default function App() {
         persisted={Boolean(currentUser)}
         onClearData={handleClearAccount}
         onExportData={() => exportCurrentData(currentUser, orders, parts, donors, settings)}
+        readOnly={readOnly}
       />
 
       {/* 6. Trial Account Modal */}
@@ -825,6 +932,13 @@ export default function App() {
       />
     </div>
   );
+}
+
+function formatAccessDate(value?: string | null): string {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return '—';
+  return date.toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' });
 }
 
 function exportCurrentData(
